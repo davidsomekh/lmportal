@@ -51,6 +51,12 @@ function getKeyCreatedDate($productKey)
         ->format('M j, Y');
 }
 
+function getTestKeyDuration($productKey)
+{
+    $db_key = new DB();
+    return $db_key->getTestKeyDuration($productKey);
+}
+
 function getLicenseFeatures($productKey)
 {
     $db_key = new DB();
@@ -291,6 +297,14 @@ $isMaker = $isMaker || in_array(95, array_map('intval', array_column($features, 
 // Internal Use License / Trial (40) unlocks every feature; it is shown as a
 // banner instead of a list row.
 $isAllFeatures = in_array(40, array_map('intval', array_column($features, 'NUMBER')), true);
+
+// Test keys get their features (all features, standalone) only on activation,
+// so before that show the trial length instead.
+$testKeyDays = $features ? 0 : getTestKeyDuration($productKey);
+if ($testKeyDays > 0) {
+    $isAllFeatures = true;
+    $licenseType = 'Standalone';
+}
 
 $listedFeatures = array_values(array_filter($features, function ($feature) use ($isMaker, $isAllFeatures) {
     $number = (int) ($feature['NUMBER'] ?? 0);
@@ -1091,6 +1105,14 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
                                         }
                                     ?></span>
                                 </span>
+                            <?php elseif ($testKeyDays > 0): ?>
+                                <span class="expires">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <circle cx="12" cy="12" r="9.5"/>
+                                        <path d="M12 7v5l3 2"/>
+                                    </svg>
+                                    Trial · <span class="days-left"><?= $testKeyDays ?> days</span> from activation
+                                </span>
                             <?php elseif ($isPermanent): ?>
                                 <span class="expires permanent">
                                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1163,8 +1185,13 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
                             <path d="m9 12 2 2 4-4"/>
                         </svg>
                         <div>
-                            <strong>All features are unlocked</strong>
-                            <span>Internal use / trial license — every SolidCAM module is available on this key.</span>
+                            <?php if ($testKeyDays > 0): ?>
+                                <strong>All features unlock on activation</strong>
+                                <span>Trial license — every SolidCAM module is available for <?= $testKeyDays ?> days from the day the key is activated.</span>
+                            <?php else: ?>
+                                <strong>All features are unlocked</strong>
+                                <span>Internal use / trial license — every SolidCAM module is available on this key.</span>
+                            <?php endif; ?>
                         </div>
                     </div>
                 <?php endif; ?>
