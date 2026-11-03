@@ -37,6 +37,20 @@ function getLastActivation($productKey)
     return $db_key->getKeyLastActivation($productKey);
 }
 
+function getKeyCreatedDate($productKey)
+{
+    $db_key = new DB();
+    $timestamp = $db_key->getKeyCreatedTimestamp($productKey);
+
+    if ($timestamp <= 0) {
+        return '';
+    }
+
+    return (new DateTime('@' . $timestamp))
+        ->setTimezone(new DateTimeZone('Asia/Jerusalem'))
+        ->format('M j, Y');
+}
+
 function getLicenseFeatures($productKey)
 {
     $db_key = new DB();
@@ -46,11 +60,38 @@ function getLicenseFeatures($productKey)
         return [];
     }
 
-    usort($features, function ($first, $second) {
-        return (int) ($first['NUMBER'] ?? 0) <=> (int) ($second['NUMBER'] ?? 0);
+    // Feature 1 (Basic SolidCAM License) is on every license, so it is not listed.
+    $features = array_values(array_filter($features, function ($feature) {
+        return (int) ($feature['NUMBER'] ?? 0) !== 1;
+    }));
+
+    // CAD integration features first, then editor/simulator modes, then the rest.
+    $groupOrder = ['integration' => 0, 'mode' => 1, '' => 2];
+    usort($features, function ($first, $second) use ($groupOrder) {
+        $firstNumber = (int) ($first['NUMBER'] ?? 0);
+        $secondNumber = (int) ($second['NUMBER'] ?? 0);
+
+        return [$groupOrder[getFeatureGroup($firstNumber)], $firstNumber]
+            <=> [$groupOrder[getFeatureGroup($secondNumber)], $secondNumber];
     });
 
     return $features;
+}
+
+function getFeatureGroup($featureNumber)
+{
+    static $integrationFeatures = [2, 3, 4, 33, 34, 35, 91, 92];
+    static $modeFeatures = [38, 80, 88];
+
+    if (in_array($featureNumber, $integrationFeatures, true)) {
+        return 'integration';
+    }
+
+    if (in_array($featureNumber, $modeFeatures, true)) {
+        return 'mode';
+    }
+
+    return '';
 }
 
 function getFeatureName($featureNumber)
@@ -161,6 +202,18 @@ function parseLicenseDate($date)
     return null;
 }
 
+function getFeatureTerms($feature)
+{
+    $users = max(1, (int) ($feature['USERS'] ?? 1));
+    $expirationDate = trim((string) ($feature['EXPIRATION_DATE'] ?? ''));
+
+    return [
+        'network' => !empty($feature['NETWORK']) ? 'Network license' : 'Standalone',
+        'users' => $users . ' ' . ($users === 1 ? 'user' : 'users'),
+        'expires' => $expirationDate !== '' ? 'Expires ' . formatDisplayDate($expirationDate) : '',
+    ];
+}
+
 function formatDisplayDate($date)
 {
     $parsedDate = parseLicenseDate($date);
@@ -186,9 +239,11 @@ if (!validateLicense($productKey)) {
 }
 
 $isActivated = isKeyActivated($productKey);
-$isMaker = $isActivated && isKeyMaker($productKey);
+$isMaker = isKeyMaker($productKey);
 
 $customer = getCustomer($productKey);
+
+$createdDate = getKeyCreatedDate($productKey);
 
 $activation = $isActivated ? getLastActivation($productKey) : null;
 $activationDate = '';
@@ -200,15 +255,32 @@ if (!empty($activation['TIMESTAMP'])) {
 
 $features = getLicenseFeatures($productKey);
 
-$expirationDates = [];
+// Terms that are identical on every feature are shown once under the key
+// instead of on each feature row.
+$termValues = [];
 foreach ($features as $feature) {
-    $parsedDate = parseLicenseDate($feature['EXPIRATION_DATE'] ?? '');
-    if ($parsedDate) {
-        $expirationDates[$parsedDate->format('Y-m-d')] = $parsedDate;
+    foreach (getFeatureTerms($feature) as $term => $value) {
+        $termValues[$term][$value] = true;
     }
 }
-ksort($expirationDates);
-$nextExpiration = $expirationDates ? reset($expirationDates) : null;
+$sharedTerms = [];
+foreach ($termValues as $term => $values) {
+    if (count($values) === 1) {
+        $sharedTerms[$term] = array_key_first($values);
+    }
+}
+
+$sharedExpiration = isset($sharedTerms['expires'])
+    ? parseLicenseDate($features[0]['EXPIRATION_DATE'] ?? '')
+    : null;
+$topTerms = array_filter(array_diff_key($sharedTerms, ['expires' => true]), 'strlen');
+
+$isMaker = $isMaker || in_array(95, array_map('intval', array_column($features, 'NUMBER')), true);
+
+// The Maker Version feature (95) is shown as the badge next to the title.
+$listedFeatures = array_values(array_filter($features, function ($feature) use ($isMaker) {
+    return !($isMaker && (int) ($feature['NUMBER'] ?? 0) === 95);
+}));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -311,10 +383,38 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
         }
 
         .expires {
+            display: flex;
+            align-items: center;
+            gap: 6px;
             margin: 8px 0 0;
             color: #c61520;
             font-size: 15px;
             font-weight: 700;
+        }
+
+        .expires svg {
+            width: 16px;
+            height: 16px;
+            flex: 0 0 auto;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .terms {
+            margin: 4px 0 0;
+            color: #755f64;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .created {
+            margin: 18px 0 0;
+            color: #5f4a4f;
+            font-size: 14px;
+            font-weight: 600;
         }
 
         .status {
@@ -375,11 +475,40 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
             background: rgba(198, 21, 32, 0.07);
         }
 
+        .maker-badge {
+            display: inline-flex;
+            margin-top: 10px;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 12px 5px 10px;
+            border: 1px solid #ddd3f1;
+            border-radius: 999px;
+            color: #5b3fa8;
+            font-size: 13px;
+            font-weight: 750;
+            background: #f4f0fc;
+        }
+
+        .maker-badge svg {
+            width: 15px;
+            height: 15px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
         .details {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: minmax(0, 1fr);
             gap: 14px;
             margin: 22px 0 28px;
+        }
+
+        .details:last-child,
+        .details:has(+ .created) {
+            margin-bottom: 0;
         }
 
         .detail {
@@ -427,13 +556,37 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
         }
 
         h2 {
-            margin: 0 0 15px;
-            font-size: 18px;
+            margin: 0;
+            font-size: 16px;
+        }
+
+        .features-box {
+            padding: 16px 18px 12px;
+            border: 1px solid #f0e3e5;
+            border-radius: 16px;
+        }
+
+        .features-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        .features-count {
+            padding: 3px 10px;
+            border-radius: 999px;
+            color: #5f4a4f;
+            font-size: 12px;
+            font-weight: 700;
+            background: #f6eeef;
         }
 
         .features {
             display: grid;
-            gap: 11px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            column-gap: 24px;
             margin: 0;
             padding: 0;
             list-style: none;
@@ -441,46 +594,60 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
 
         .feature {
             display: flex;
-            align-items: center;
-            gap: 14px;
-            padding: 14px 15px;
-            border: 1px solid #eee0e2;
-            border-radius: 14px;
-            background: #fffafb;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 6px 0;
+            font-size: 14px;
+            line-height: 1.4;
         }
 
-        .icon {
-            width: 34px;
-            height: 34px;
-            display: grid;
-            place-items: center;
+        .check {
+            width: 16px;
+            height: 16px;
             flex: 0 0 auto;
-            border-radius: 10px;
-            font-weight: 800;
-            color: <?= $isActivated ? '#087f69' : '#8a7479' ?>;
-            background: <?= $isActivated ? 'rgba(8, 127, 105, 0.08)' : 'rgba(138, 116, 121, 0.1)' ?>;
+            margin-top: 2px;
+            fill: none;
+            stroke: <?= $isActivated ? '#16a34a' : '#a8969a' ?>;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
         }
 
         .feature-text {
             min-width: 0;
-            flex: 1;
         }
 
-        .feature strong,
         .feature small {
             display: block;
-        }
-
-        .feature small {
-            margin-top: 3px;
             color: #806c70;
-            line-height: 1.35;
+            font-size: 12px;
         }
 
-        .availability {
-            color: <?= $isActivated ? '#087f69' : '#8a7479' ?>;
-            font-size: 12px;
+        .feature-tag {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 1px 7px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 750;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            vertical-align: 1px;
+        }
+
+        .feature.integration .feature-name,
+        .feature.mode .feature-name {
             font-weight: 700;
+        }
+
+        .integration .feature-tag {
+            color: #3d5a80;
+            background: #e4ebf4;
+        }
+
+        .mode .feature-tag {
+            color: #8a5a12;
+            background: #f5e8d2;
         }
 
         .notice {
@@ -776,12 +943,8 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
                 grid-template-columns: 1fr;
             }
 
-            .feature {
-                align-items: flex-start;
-            }
-
-            .availability {
-                display: none;
+            .features {
+                grid-template-columns: minmax(0, 1fr);
             }
         }
 
@@ -810,8 +973,25 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
                 <div>
                     <h1>License details</h1>
                     <p class="key"><?= htmlspecialchars($productKey, ENT_QUOTES, 'UTF-8') ?></p>
-                    <?php if ($nextExpiration): ?>
-                        <p class="expires"><?= $nextExpiration < new DateTime('today') ? 'Expired' : 'Expires' ?> <?= $nextExpiration->format('M j, Y') ?></p>
+                    <?php if ($sharedExpiration): ?>
+                        <p class="expires">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/>
+                                <path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>
+                            </svg>
+                            <?= $sharedExpiration < new DateTime('today') ? 'Expired' : 'Expires' ?> <?= $sharedExpiration->format('M j, Y') ?>
+                        </p>
+                    <?php endif; ?>
+                    <?php if ($topTerms): ?>
+                        <p class="terms"><?= htmlspecialchars(implode(' · ', $topTerms), ENT_QUOTES, 'UTF-8') ?></p>
+                    <?php endif; ?>
+                    <?php if ($isMaker): ?>
+                        <span class="maker-badge">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                            </svg>
+                            SolidCAM Maker
+                        </span>
                     <?php endif; ?>
                 </div>
                 <?php if ($isActivated): ?>
@@ -839,16 +1019,6 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
             <div class="details">
                 <div class="detail with-icon">
                     <svg class="detail-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                        <path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/>
-                    </svg>
-                    <div>
-                        <span>Product</span>
-                        <strong><?= $isMaker ? 'SolidCAM Maker' : 'SolidCAM' ?></strong>
-                    </div>
-                </div>
-                <div class="detail with-icon">
-                    <svg class="detail-icon" viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                         <circle cx="12" cy="7" r="4"/>
                     </svg>
@@ -859,39 +1029,54 @@ $nextExpiration = $expirationDates ? reset($expirationDates) : null;
                 </div>
             </div>
 
-            <div>
-                <h2>Included features</h2>
-                <?php if ($features): ?>
+            <?php if ($listedFeatures || !$isMaker): ?>
+            <div class="features-box">
+                <div class="features-header">
+                    <h2>Included features</h2>
+                    <?php if ($listedFeatures): ?>
+                        <span class="features-count"><?= count($listedFeatures) ?> <?= count($listedFeatures) === 1 ? 'feature' : 'features' ?></span>
+                    <?php endif; ?>
+                </div>
+                <?php if ($listedFeatures): ?>
                     <ul class="features">
-                    <?php foreach ($features as $feature):
+                    <?php foreach ($listedFeatures as $feature):
                         $featureNumber = (int) ($feature['NUMBER'] ?? 0);
-                        $expirationDate = trim((string) ($feature['EXPIRATION_DATE'] ?? ''));
-                        $network = !empty($feature['NETWORK']) ? 'Network license' : 'Standalone';
-                        $users = max(1, (int) ($feature['USERS'] ?? 1));
-                        $metadata = [
-                            'Feature #' . $featureNumber,
-                            $network,
-                            $users . ' ' . ($users === 1 ? 'user' : 'users'),
-                        ];
-                        if ($expirationDate !== '') {
-                            $metadata[] = 'Expires ' . formatDisplayDate($expirationDate);
+                        $metadata = [];
+                        foreach (getFeatureTerms($feature) as $term => $value) {
+                            if (!isset($sharedTerms[$term]) && $value !== '') {
+                                $metadata[] = $value;
+                            }
                         }
+                        $featureName = getFeatureName($featureNumber);
+                        $featureGroup = getFeatureGroup($featureNumber);
+                        $groupTags = ['integration' => 'CAD', 'mode' => 'Mode'];
                     ?>
-                        <li class="feature">
-                            <span class="icon" aria-hidden="true"><?= 1 > 0 ? '✓' : '—' ?></span>
+                        <li class="feature <?= $featureGroup ?>" title="<?= htmlspecialchars(implode(' · ', array_merge([$featureName, '#' . $featureNumber], $metadata)), ENT_QUOTES, 'UTF-8') ?>">
+                            <svg class="check" viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="12" cy="12" r="9.5"/>
+                                <path d="m8 12.5 2.7 2.7L16 9.8"/>
+                            </svg>
                             <span class="feature-text">
-                                <strong><?= htmlspecialchars(getFeatureName($featureNumber), ENT_QUOTES, 'UTF-8') ?></strong>
-                                <small><?= htmlspecialchars(implode(' · ', $metadata), ENT_QUOTES, 'UTF-8') ?></small>
+                                <span class="feature-name"><?= htmlspecialchars($featureName, ENT_QUOTES, 'UTF-8') ?></span>
+                                <?php if ($featureGroup !== ''): ?>
+                                    <span class="feature-tag"><?= $groupTags[$featureGroup] ?></span>
+                                <?php endif; ?>
+                                <?php if ($metadata): ?>
+                                    <small><?= htmlspecialchars(implode(' · ', $metadata), ENT_QUOTES, 'UTF-8') ?></small>
+                                <?php endif; ?>
                             </span>
-                            <span class="availability"><?= 1 > 0 ? 'Available' : 'Locked' ?></span>
                         </li>
                     <?php endforeach; ?>
                     </ul>
                 <?php else: ?>
-                    <div class="detail">No features were found for this license.</div>
+                    <p class="feature">No features were found for this license.</p>
                 <?php endif; ?>
             </div>
+            <?php endif; ?>
 
+            <?php if ($createdDate !== ''): ?>
+                <p class="created">Key created <?= $createdDate ?></p>
+            <?php endif; ?>
         </section>
     </main>
     <?php if (!$isActivated): ?>
