@@ -682,7 +682,7 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
         .features {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            column-gap: 24px;
+            column-gap: 38px;
             margin: 0;
             padding: 0;
             list-style: none;
@@ -1097,7 +1097,7 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
                                         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                                         <path d="m9 12 2 2 4-4"/>
                                     </svg>
-                                    Permanent license
+                                    Perpetual license
                                 </span>
                             <?php endif; ?>
                             <?php if ($isMaker): ?>
@@ -1206,7 +1206,7 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
             <?php endif; ?>
 
             <?php if ($createdDate !== ''): ?>
-                <p class="created">Created On: <?= $createdDate ?></p>
+                <p class="created">License created: <?= $createdDate ?></p>
             <?php endif; ?>
         </section>
     </main>
