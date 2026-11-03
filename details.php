@@ -273,13 +273,28 @@ foreach ($termValues as $term => $values) {
 $sharedExpiration = isset($sharedTerms['expires'])
     ? parseLicenseDate($features[0]['EXPIRATION_DATE'] ?? '')
     : null;
-$topTerms = array_filter(array_diff_key($sharedTerms, ['expires' => true]), 'strlen');
+$isPermanent = $features && ($sharedTerms['expires'] ?? null) === '';
+$daysLeft = $sharedExpiration
+    ? (int) (new DateTime('today'))->diff($sharedExpiration)->format('%r%a')
+    : null;
+// Header license type: "Standalone", or "Network · N users".
+$licenseType = '';
+if (($sharedTerms['network'] ?? '') === 'Standalone') {
+    $licenseType = 'Standalone';
+} elseif (($sharedTerms['network'] ?? '') === 'Network license') {
+    $licenseType = 'Network' . (isset($sharedTerms['users']) ? ' · ' . $sharedTerms['users'] : '');
+}
 
 $isMaker = $isMaker || in_array(95, array_map('intval', array_column($features, 'NUMBER')), true);
 
 // The Maker Version feature (95) is shown as the badge next to the title.
-$listedFeatures = array_values(array_filter($features, function ($feature) use ($isMaker) {
-    return !($isMaker && (int) ($feature['NUMBER'] ?? 0) === 95);
+// Internal Use License / Trial (40) unlocks every feature; it is shown as a
+// banner instead of a list row.
+$isAllFeatures = in_array(40, array_map('intval', array_column($features, 'NUMBER')), true);
+
+$listedFeatures = array_values(array_filter($features, function ($feature) use ($isMaker, $isAllFeatures) {
+    $number = (int) ($feature['NUMBER'] ?? 0);
+    return !($isMaker && $number === 95) && !($isAllFeatures && $number === 40);
 }));
 ?>
 <!DOCTYPE html>
@@ -382,32 +397,67 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
             font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
         }
 
-        .expires {
+        .license-info {
             display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px 11px;
+            margin-top: 6px;
+        }
+
+        .license-type {
+            color: #5f4a4f;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .expires {
+            display: inline-flex;
             align-items: center;
             gap: 6px;
-            margin: 8px 0 0;
-            color: #c61520;
-            font-size: 15px;
+            padding: 5px 11px;
+            border: 1px solid #eadfe1;
+            border-radius: 999px;
+            color: #4a3539;
+            font-size: 14px;
+            font-weight: 500;
+            line-height: 1.3;
+            white-space: nowrap;
+            background: #faf5f6;
+        }
+
+        .expires .days-left {
             font-weight: 700;
         }
 
+        .expires.soon {
+            border-color: rgba(180, 110, 0, 0.3);
+            color: #9a5b00;
+            background: #fff6e5;
+        }
+
+        .expires.permanent {
+            border-color: rgba(8, 127, 105, 0.25);
+            color: #087f69;
+            font-weight: 600;
+            background: #ecf8f4;
+        }
+
+        .expires.expired {
+            border-color: rgba(198, 21, 32, 0.22);
+            color: #c61520;
+            background: #fff1f3;
+        }
+
         .expires svg {
-            width: 16px;
-            height: 16px;
+            width: 15px;
+            height: 15px;
             flex: 0 0 auto;
             fill: none;
             stroke: currentColor;
             stroke-width: 2;
             stroke-linecap: round;
             stroke-linejoin: round;
-        }
-
-        .terms {
-            margin: 4px 0 0;
-            color: #755f64;
-            font-size: 14px;
-            font-weight: 600;
         }
 
         .created {
@@ -477,21 +527,22 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
 
         .maker-badge {
             display: inline-flex;
-            margin-top: 10px;
             align-items: center;
-            gap: 6px;
-            padding: 5px 12px 5px 10px;
+            gap: 5px;
+            padding: 2px 9px;
             border: 1px solid #ddd3f1;
             border-radius: 999px;
             color: #5b3fa8;
-            font-size: 13px;
-            font-weight: 750;
+            font-size: 12.5px;
+            font-weight: 700;
+            line-height: 1.5;
+            white-space: nowrap;
             background: #f4f0fc;
         }
 
         .maker-badge svg {
-            width: 15px;
-            height: 15px;
+            width: 13px;
+            height: 13px;
             fill: none;
             stroke: currentColor;
             stroke-width: 2;
@@ -583,6 +634,51 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
             background: #f6eeef;
         }
 
+        .all-features {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 16px;
+            border: 1px solid rgba(8, 127, 105, 0.2);
+            border-radius: 14px;
+            background: linear-gradient(135deg, #effaf6 0%, #f7fcfa 100%);
+        }
+
+        .all-features + .features {
+            margin-top: 12px;
+        }
+
+        .all-features svg {
+            width: 40px;
+            height: 40px;
+            flex: 0 0 auto;
+            padding: 9px;
+            border-radius: 12px;
+            fill: none;
+            stroke: #087f69;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            background: rgba(8, 127, 105, 0.1);
+        }
+
+        .all-features strong,
+        .all-features span {
+            display: block;
+        }
+
+        .all-features strong {
+            color: #065f4f;
+            font-size: 15px;
+        }
+
+        .all-features span {
+            margin-top: 2px;
+            color: #4f6b64;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
         .features {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -607,7 +703,7 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
             flex: 0 0 auto;
             margin-top: 2px;
             fill: none;
-            stroke: <?= $isActivated ? '#16a34a' : '#a8969a' ?>;
+            stroke: #16a34a;
             stroke-width: 2;
             stroke-linecap: round;
             stroke-linejoin: round;
@@ -973,25 +1069,46 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
                 <div>
                     <h1>License details</h1>
                     <p class="key"><?= htmlspecialchars($productKey, ENT_QUOTES, 'UTF-8') ?></p>
-                    <?php if ($sharedExpiration): ?>
-                        <p class="expires">
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/>
-                                <path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>
-                            </svg>
-                            <?= $sharedExpiration < new DateTime('today') ? 'Expired' : 'Expires' ?> <?= $sharedExpiration->format('M j, Y') ?>
-                        </p>
-                    <?php endif; ?>
-                    <?php if ($topTerms): ?>
-                        <p class="terms"><?= htmlspecialchars(implode(' · ', $topTerms), ENT_QUOTES, 'UTF-8') ?></p>
-                    <?php endif; ?>
-                    <?php if ($isMaker): ?>
-                        <span class="maker-badge">
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                            </svg>
-                            SolidCAM Maker
-                        </span>
+                    <?php if ($licenseType !== '' || $sharedExpiration || $isPermanent || $isMaker): ?>
+                        <div class="license-info">
+                            <?php if ($licenseType !== ''): ?>
+                                <span class="license-type"><?= htmlspecialchars($licenseType, ENT_QUOTES, 'UTF-8') ?></span>
+                            <?php endif; ?>
+                            <?php if ($sharedExpiration): ?>
+                                <span class="expires<?= $daysLeft < 0 ? ' expired' : ($daysLeft <= 30 ? ' soon' : '') ?>">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/>
+                                        <path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>
+                                    </svg>
+                                    <?= $daysLeft < 0 ? 'Expired' : 'Expires' ?> <?= $sharedExpiration->format('M j, Y') ?> ·
+                                    <span class="days-left"><?php
+                                        if ($daysLeft === 0) {
+                                            echo 'today';
+                                        } elseif ($daysLeft > 0) {
+                                            echo $daysLeft . ($daysLeft === 1 ? ' day' : ' days') . ' left';
+                                        } else {
+                                            echo -$daysLeft . ($daysLeft === -1 ? ' day' : ' days') . ' ago';
+                                        }
+                                    ?></span>
+                                </span>
+                            <?php elseif ($isPermanent): ?>
+                                <span class="expires permanent">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                        <path d="m9 12 2 2 4-4"/>
+                                    </svg>
+                                    Permanent license
+                                </span>
+                            <?php endif; ?>
+                            <?php if ($isMaker): ?>
+                                <span class="maker-badge">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                                    </svg>
+                                    SolidCAM Maker
+                                </span>
+                            <?php endif; ?>
+                        </div>
                     <?php endif; ?>
                 </div>
                 <?php if ($isActivated): ?>
@@ -1029,14 +1146,28 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
                 </div>
             </div>
 
-            <?php if ($listedFeatures || !$isMaker): ?>
+            <?php if ($listedFeatures || !$isMaker || $isAllFeatures): ?>
             <div class="features-box">
                 <div class="features-header">
                     <h2>Included features</h2>
-                    <?php if ($listedFeatures): ?>
+                    <?php if ($isAllFeatures): ?>
+                        <span class="features-count">All features</span>
+                    <?php elseif ($listedFeatures): ?>
                         <span class="features-count"><?= count($listedFeatures) ?> <?= count($listedFeatures) === 1 ? 'feature' : 'features' ?></span>
                     <?php endif; ?>
                 </div>
+                <?php if ($isAllFeatures): ?>
+                    <div class="all-features">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <path d="m9 12 2 2 4-4"/>
+                        </svg>
+                        <div>
+                            <strong>All features are unlocked</strong>
+                            <span>Internal use / trial license — every SolidCAM module is available on this key.</span>
+                        </div>
+                    </div>
+                <?php endif; ?>
                 <?php if ($listedFeatures): ?>
                     <ul class="features">
                     <?php foreach ($listedFeatures as $feature):
@@ -1068,14 +1199,14 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
                         </li>
                     <?php endforeach; ?>
                     </ul>
-                <?php else: ?>
+                <?php elseif (!$isAllFeatures): ?>
                     <p class="feature">No features were found for this license.</p>
                 <?php endif; ?>
             </div>
             <?php endif; ?>
 
             <?php if ($createdDate !== ''): ?>
-                <p class="created">Key created <?= $createdDate ?></p>
+                <p class="created">Created On: <?= $createdDate ?></p>
             <?php endif; ?>
         </section>
     </main>
