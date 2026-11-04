@@ -51,6 +51,12 @@ function getKeyCreatedDate($productKey)
         ->format('M j, Y');
 }
 
+function getKeyVersionAndSubscription($productKey)
+{
+    $db_key = new DB();
+    return $db_key->getKeyVersionAndSubscription($productKey);
+}
+
 function getTestKeyDuration($productKey)
 {
     $db_key = new DB();
@@ -251,6 +257,13 @@ $customer = getCustomer($productKey);
 
 $createdDate = getKeyCreatedDate($productKey);
 
+$keyInfo = getKeyVersionAndSubscription($productKey);
+$version = $keyInfo['VERSION'];
+$subscriptionEnd = parseLicenseDate($keyInfo['SUBS_DATE']);
+$subscriptionDaysLeft = $subscriptionEnd
+    ? (int) (new DateTime('today'))->diff($subscriptionEnd)->format('%r%a')
+    : null;
+
 $activation = $isActivated ? getLastActivation($productKey) : null;
 $activationDate = '';
 if (!empty($activation['TIMESTAMP'])) {
@@ -305,6 +318,12 @@ if ($testKeyDays > 0) {
     $isAllFeatures = true;
     $licenseType = 'Standalone';
 }
+
+// Internal use / trial keys may always run the latest version.
+if ($isAllFeatures) {
+    $version = date('Y');
+}
+$isOldVersion = $version !== '' && $version !== date('Y');
 
 $listedFeatures = array_values(array_filter($features, function ($feature) use ($isMaker, $isAllFeatures) {
     $number = (int) ($feature['NUMBER'] ?? 0);
@@ -566,9 +585,37 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
 
         .details {
             display: grid;
-            grid-template-columns: minmax(0, 1fr);
+            grid-auto-flow: column;
+            grid-template-columns: minmax(0, 1.6fr);
+            grid-auto-columns: minmax(0, 1fr);
             gap: 14px;
             margin: 22px 0 28px;
+        }
+
+        .detail small {
+            display: block;
+            margin-top: 2px;
+            color: #806c70;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .detail.outdated {
+            box-shadow: inset 0 0 0 1px rgba(180, 110, 0, 0.3);
+            background: #fff6e5;
+        }
+
+        .detail.outdated .detail-icon {
+            stroke: #b46e00;
+            background: rgba(180, 110, 0, 0.12);
+        }
+
+        .detail small.soon {
+            color: #9a5b00;
+        }
+
+        .detail small.ended {
+            color: #c61520;
         }
 
         .details:last-child,
@@ -1050,6 +1097,7 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
             }
 
             .details {
+                grid-auto-flow: row;
                 grid-template-columns: 1fr;
             }
 
@@ -1166,6 +1214,49 @@ $listedFeatures = array_values(array_filter($features, function ($feature) use (
                         <strong><?= $customer ?></strong>
                     </div>
                 </div>
+                <?php if ($version !== ''): ?>
+                <div class="detail with-icon<?= $isOldVersion ? ' outdated' : '' ?>">
+                    <?php if ($isOldVersion): ?>
+                        <svg class="detail-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                            <path d="M12 9v4M12 17h.01"/>
+                        </svg>
+                    <?php else: ?>
+                        <svg class="detail-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                            <circle cx="7" cy="7" r="1.5"/>
+                        </svg>
+                    <?php endif; ?>
+                    <div>
+                        <span>Version</span>
+                        <strong><?= htmlspecialchars($version, ENT_QUOTES, 'UTF-8') ?></strong>
+                        <?php if ($isOldVersion): ?>
+                            <small class="soon">Current is <?= date('Y') ?></small>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+                <?php if ($subscriptionEnd): ?>
+                <div class="detail with-icon">
+                    <svg class="detail-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M21 12a9 9 0 0 1-15.36 6.36L3 16M3 12a9 9 0 0 1 15.36-6.36L21 8"/>
+                        <path d="M21 3v5h-5M3 21v-5h5"/>
+                    </svg>
+                    <div>
+                        <span>Subscription</span>
+                        <strong><?= $subscriptionEnd->format('M j, Y') ?></strong>
+                        <small class="<?= $subscriptionDaysLeft < 0 ? 'ended' : ($subscriptionDaysLeft <= 30 ? 'soon' : '') ?>"><?php
+                            if ($subscriptionDaysLeft === 0) {
+                                echo 'Ends today';
+                            } elseif ($subscriptionDaysLeft > 0) {
+                                echo 'Ends in ' . $subscriptionDaysLeft . ($subscriptionDaysLeft === 1 ? ' day' : ' days');
+                            } else {
+                                echo 'Ended ' . -$subscriptionDaysLeft . ($subscriptionDaysLeft === -1 ? ' day' : ' days') . ' ago';
+                            }
+                        ?></small>
+                    </div>
+                </div>
+                <?php endif; ?>
             </div>
 
             <?php if ($listedFeatures || !$isMaker || $isAllFeatures): ?>
